@@ -29,10 +29,10 @@ integration.
 
 ## Manual installation
 
-Copy `sunray-cassandra-map-card.js` to `<config>/www/` and add a Lovelace resource:
+Copy `ha-sunray-cassandra-map-card.js` to `<config>/www/` and add a Lovelace resource:
 
 ```yaml
-url: /local/sunray-cassandra-map-card.js
+url: /local/ha-sunray-cassandra-map-card.js
 type: module
 ```
 
