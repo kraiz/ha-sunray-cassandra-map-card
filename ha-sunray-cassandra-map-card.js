@@ -26,11 +26,11 @@
  *     so we flip Y when projecting.
  */
 
-const CARD_VERSION = "0.2.0";
+const CARD_VERSION = "0.2.1";
 
 // ─── Default colours (all overridable via card config) ──────────────────────
 const DEFAULTS = {
-  background:       "#1a1a2e",
+  background:       null,            // null = use HA card background CSS variable
   perimeter_fill:   "rgba(34, 139, 34, 0.18)",
   perimeter_stroke: "#4caf50",
   exclusion_fill:   "rgba(180, 30, 30, 0.25)",
@@ -115,6 +115,11 @@ class SunrayCassandraMapCard extends HTMLElement {
     this._hass   = null;
     this._rafId  = null;
     this._dirty  = false;
+
+    // Zoom / pan state (user-driven via pinch & drag)
+    this._zoom   = 1;       // multiplicative zoom on top of auto-fit
+    this._panX   = 0;       // pixel offset X (in display pixels)
+    this._panY   = 0;       // pixel offset Y
   }
 
   // ── Lovelace lifecycle ───────────────────────────────────────────────────
@@ -143,7 +148,7 @@ class SunrayCassandraMapCard extends HTMLElement {
       :host { display: block; }
       ha-card {
         overflow: hidden;
-        background: ${this._config.background};
+        background: var(--card-background-color, #1c1c1e);
         border-radius: var(--ha-card-border-radius, 12px);
       }
       .card-header {
@@ -158,10 +163,12 @@ class SunrayCassandraMapCard extends HTMLElement {
       canvas {
         display: block;
         width: 100%;
+        touch-action: none;
+        cursor: grab;
       }
       .status-bar {
         padding: 4px 16px 10px;
-        font-size: 0.75em;
+        font-size: 1em;
         color: var(--secondary-text-color, #aaa);
         display: flex;
         gap: 16px;
@@ -177,20 +184,20 @@ class SunrayCassandraMapCard extends HTMLElement {
 
     const card = document.createElement("ha-card");
     card.innerHTML = `
-      <div class="card-header">
-        <span class="title"></span>
-      </div>
       <canvas></canvas>
       <div class="status-bar"></div>
     `;
 
     this._card      = card;
-    this._titleEl   = card.querySelector(".title");
+    this._titleEl   = null;
     this._canvas    = card.querySelector("canvas");
     this._statusBar = card.querySelector(".status-bar");
     this._ctx       = this._canvas.getContext("2d");
 
     this.shadowRoot.append(style, card);
+
+    // ── Touch zoom / pan ─────────────────────────────────────────────────
+    this._initTouchHandlers();
 
     // Observe resize so the canvas scales with the card
     this._resizeObserver = new ResizeObserver(() => {
@@ -198,6 +205,129 @@ class SunrayCassandraMapCard extends HTMLElement {
       this._scheduleRender();
     });
     this._resizeObserver.observe(this._canvas);
+  }
+
+  // ── Touch zoom / pan handlers ────────────────────────────────────────────
+
+  _initTouchHandlers() {
+    const canvas = this._canvas;
+
+    // Internal touch tracking
+    let _touches      = [];   // active touch list (copies)
+    let _lastDist     = null; // last pinch distance (px)
+    let _lastMidX     = null; // last pinch midpoint X
+    let _lastMidY     = null; // last pinch midpoint Y
+    let _lastSingleX  = null; // last single-finger X
+    let _lastSingleY  = null; // last single-finger Y
+
+    const dist = (a, b) =>
+      Math.hypot(b.clientX - a.clientX, b.clientY - a.clientY);
+
+    const mid = (a, b) => ({
+      x: (a.clientX + b.clientX) / 2,
+      y: (a.clientY + b.clientY) / 2,
+    });
+
+    const canvasRect = () => canvas.getBoundingClientRect();
+
+    canvas.addEventListener("touchstart", (e) => {
+      e.preventDefault();
+      _touches = Array.from(e.touches);
+      if (_touches.length === 2) {
+        _lastDist = dist(_touches[0], _touches[1]);
+        const m = mid(_touches[0], _touches[1]);
+        _lastMidX = m.x;
+        _lastMidY = m.y;
+      } else if (_touches.length === 1) {
+        _lastSingleX = _touches[0].clientX;
+        _lastSingleY = _touches[0].clientY;
+      }
+    }, { passive: false });
+
+    canvas.addEventListener("touchmove", (e) => {
+      e.preventDefault();
+      _touches = Array.from(e.touches);
+
+      if (_touches.length === 2) {
+        // ── Pinch zoom ──────────────────────────────────────────────────
+        const newDist = dist(_touches[0], _touches[1]);
+        const m       = mid(_touches[0], _touches[1]);
+        const rect    = canvasRect();
+
+        if (_lastDist !== null) {
+          const ratio   = newDist / _lastDist;
+          const newZoom = Math.min(Math.max(this._zoom * ratio, 0.5), 10);
+
+          // Zoom towards the pinch midpoint (in canvas-local coords)
+          const midX = m.x - rect.left;
+          const midY = m.y - rect.top;
+          const cw   = canvas.clientWidth;
+          const ch   = canvas.clientHeight;
+          const cx   = cw / 2;
+          const cy   = ch / 2;
+
+          // Current mapped position of midpoint before zoom:
+          // px = cx + panX + (midX - cx) * zoom  → solve for new panX/Y
+          const zoomDelta = newZoom / this._zoom;
+          this._panX = (this._panX + midX - cx) * zoomDelta - (midX - cx);
+          this._panY = (this._panY + midY - cy) * zoomDelta - (midY - cy);
+          this._zoom = newZoom;
+
+          // Pan with midpoint movement
+          this._panX += m.x - _lastMidX;
+          this._panY += m.y - _lastMidY;
+        }
+
+        _lastDist = newDist;
+        _lastMidX = m.x;
+        _lastMidY = m.y;
+        _lastSingleX = null;
+        _lastSingleY = null;
+
+        this._dirty = true;
+        this._scheduleRender();
+
+      } else if (_touches.length === 1 && this._zoom > 1) {
+        // ── Single-finger pan (only when zoomed in) ─────────────────────
+        if (_lastSingleX !== null) {
+          this._panX += _touches[0].clientX - _lastSingleX;
+          this._panY += _touches[0].clientY - _lastSingleY;
+          this._dirty = true;
+          this._scheduleRender();
+        }
+        _lastSingleX = _touches[0].clientX;
+        _lastSingleY = _touches[0].clientY;
+        _lastDist    = null;
+      }
+    }, { passive: false });
+
+    canvas.addEventListener("touchend", (e) => {
+      _touches = Array.from(e.touches);
+      if (_touches.length < 2) {
+        _lastDist = null;
+        _lastMidX = null;
+        _lastMidY = null;
+      }
+      if (_touches.length < 1) {
+        _lastSingleX = null;
+        _lastSingleY = null;
+      }
+    }, { passive: true });
+
+    // Double-tap to reset zoom/pan
+    let _lastTap = 0;
+    canvas.addEventListener("touchend", (e) => {
+      if (e.changedTouches.length !== 1) return;
+      const now = Date.now();
+      if (now - _lastTap < 300) {
+        this._zoom = 1;
+        this._panX = 0;
+        this._panY = 0;
+        this._dirty = true;
+        this._scheduleRender();
+      }
+      _lastTap = now;
+    }, { passive: true });
   }
 
   // ── Render scheduling ────────────────────────────────────────────────────
@@ -228,7 +358,7 @@ class SunrayCassandraMapCard extends HTMLElement {
            ?? stateObj.attributes.friendly_name
            ?? cfg.entity)
         : cfg.entity);
-    this._titleEl.textContent = title;
+    if (this._titleEl) this._titleEl.textContent = title;
 
     if (!stateObj) {
       this._showOffline("Entity not found: " + cfg.entity);
@@ -319,8 +449,11 @@ class SunrayCassandraMapCard extends HTMLElement {
     const ctx = this._ctx;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-    // Background
-    ctx.fillStyle = cfg.background;
+    // Background — use configured colour or fall back to the HA card background CSS variable
+    const bgColor = cfg.background ||
+      getComputedStyle(this._card).getPropertyValue("--card-background-color").trim() ||
+      "#1c1c1e";
+    ctx.fillStyle = bgColor;
     ctx.fillRect(0, 0, displayWidth, displayHeight);
 
     if (!bbox) {
@@ -330,6 +463,15 @@ class SunrayCassandraMapCard extends HTMLElement {
     }
 
     const proj = makeProjection(bbox, displayWidth, displayHeight, cfg.padding);
+
+    // Apply user zoom / pan on top of the auto-fit projection.
+    // We zoom around the canvas centre.
+    const cx = displayWidth  / 2;
+    const cy = displayHeight / 2;
+    ctx.save();
+    ctx.translate(cx + this._panX, cy + this._panY);
+    ctx.scale(this._zoom, this._zoom);
+    ctx.translate(-cx, -cy);
 
     // ── Draw layers (back → front) ───────────────────────────────────────
 
@@ -379,9 +521,11 @@ class SunrayCassandraMapCard extends HTMLElement {
 
     // 6. Rover position
     if (roverPt.length) {
-      const [cx, cy] = proj(roverPt[0]);
-      this._drawRover(ctx, cx, cy, cfg.rover_radius, cfg.rover_fill, cfg.rover_stroke);
+      const [rx, ry] = proj(roverPt[0]);
+      this._drawRover(ctx, rx, ry, cfg.rover_radius, cfg.rover_fill, cfg.rover_stroke);
     }
+
+    ctx.restore();
 
     // ── Status bar ───────────────────────────────────────────────────────
     this._updateStatusBar(progress, posX, posY, stateObj);
@@ -466,9 +610,6 @@ class SunrayCassandraMapCard extends HTMLElement {
     const parts = [];
     if (progress != null && progress !== "unknown") {
       parts.push(`Progress: ${progress}%`);
-    }
-    if (posX != null && posY != null) {
-      parts.push(`Position: (${Number(posX).toFixed(2)}, ${Number(posY).toFixed(2)}) m`);
     }
     const status = stateObj?.attributes?.status
       ?? this._hass?.states[this._config.entity]?.attributes?.status;
