@@ -26,22 +26,22 @@
  *     so we flip Y when projecting.
  */
 
-const CARD_VERSION = "0.2.1";
+const CARD_VERSION = "0.2.2";
 
 // ─── Default colours (all overridable via card config) ──────────────────────
 const DEFAULTS = {
   background:       null,            // null = use HA card background CSS variable
-  perimeter_fill:   "rgba(34, 139, 34, 0.18)",
-  perimeter_stroke: "#4caf50",
-  exclusion_fill:   "rgba(180, 30, 30, 0.25)",
-  exclusion_stroke: "#e53935",
-  obstacle_fill:    "rgba(255, 152, 0, 0.35)",
-  obstacle_stroke:  "#ff9800",
-  mow_done:         "#1565c0",
-  mow_todo:         "rgba(100, 181, 246, 0.45)",
-  dock_stroke:      "#ffd54f",
-  rover_fill:       "#ffffff",
-  rover_stroke:     "#00e5ff",
+  perimeter_fill:   "rgba(0, 128, 128, 0.10)",
+  perimeter_stroke: "#008080",
+  exclusion_fill:   "rgba(0, 128, 128, 0.10)",
+  exclusion_stroke: "#008080",
+  obstacle_fill:    "rgba(255, 102, 0, 0.35)",
+  obstacle_stroke:  "#FF6600",
+  mow_done:         "rgba(127, 127, 127, 0.5)",
+  mow_todo:         "rgba(127, 178, 73, 0.7)",
+  dock_stroke:      "#0f2105",
+  rover_fill:       "grey",
+  rover_stroke:     "DarkSlateGrey",
   rover_radius:     6,        // px
   padding:          16,       // px around the map content
   height:           400,      // px
@@ -570,9 +570,22 @@ class SunrayCassandraMapCard extends HTMLElement {
   }
 
   _drawRover(ctx, cx, cy, r, fill, stroke) {
-    // Outer glow
+    // Outer glow — resolve any CSS colour to rgba with 0.4 alpha
     const grd = ctx.createRadialGradient(cx, cy, r * 0.2, cx, cy, r * 2.5);
-    grd.addColorStop(0, stroke.replace(")", ", 0.4)").replace("rgb", "rgba"));
+    // Use a scratch canvas to resolve named / hex colours to rgb()
+    const _tmp = document.createElement("canvas").getContext("2d");
+    _tmp.fillStyle = stroke;
+    const resolved = _tmp.fillStyle; // always returns #rrggbb or rgba(...)
+    let glowColor;
+    if (resolved.startsWith("#")) {
+      const r2 = parseInt(resolved.slice(1, 3), 16);
+      const g2 = parseInt(resolved.slice(3, 5), 16);
+      const b2 = parseInt(resolved.slice(5, 7), 16);
+      glowColor = `rgba(${r2}, ${g2}, ${b2}, 0.4)`;
+    } else {
+      glowColor = resolved.replace(")", ", 0.4)").replace("rgb", "rgba");
+    }
+    grd.addColorStop(0, glowColor);
     grd.addColorStop(1, "transparent");
     ctx.beginPath();
     ctx.arc(cx, cy, r * 2.5, 0, Math.PI * 2);

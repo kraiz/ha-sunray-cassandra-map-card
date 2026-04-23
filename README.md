@@ -44,19 +44,18 @@ entity: sensor.cassandra_map_data   # required — the Map Data sensor
 title: Garden Map                   # optional — card header text
 height: 400                         # optional — canvas height in px (default 400)
 
-# All colours are optional — these are the defaults:
-background:       "#1a1a2e"
-perimeter_fill:   "rgba(34, 139, 34, 0.18)"
-perimeter_stroke: "#4caf50"
-exclusion_fill:   "rgba(180, 30, 30, 0.25)"
-exclusion_stroke: "#e53935"
-obstacle_fill:    "rgba(255, 152, 0, 0.35)"
-obstacle_stroke:  "#ff9800"
-mow_done:         "#1565c0"
-mow_todo:         "rgba(100, 181, 246, 0.45)"
-dock_stroke:      "#ffd54f"
-rover_fill:       "#ffffff"
-rover_stroke:     "#00e5ff"
+# All colours are optional — defaults match the original CaSSAndRA UI:
+perimeter_fill:   "rgba(0, 128, 128, 0.10)"
+perimeter_stroke: "#008080"
+exclusion_fill:   "rgba(0, 128, 128, 0.10)"
+exclusion_stroke: "#008080"
+obstacle_fill:    "rgba(255, 102, 0, 0.35)"
+obstacle_stroke:  "#FF6600"
+mow_done:         "rgba(127, 127, 127, 0.5)"
+mow_todo:         "rgba(127, 178, 73, 0.7)"
+dock_stroke:      "#0f2105"
+rover_fill:       "grey"
+rover_stroke:     "DarkSlateGrey"
 rover_radius:     6       # rover dot radius in px
 padding:          16      # padding around map content in px
 ```
